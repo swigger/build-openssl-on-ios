@@ -3,12 +3,74 @@ use strict;
 use warnings;
 use Cwd qw(abs_path getcwd);
 
+{
+	package BOOLOPT;
+	sub new{
+		my ($class, $v) = @_;
+		my $self = bless {'val'=>$v}, $class;
+		return $self;
+	};
+	sub value{
+		my $self = shift;
+		return $self->{val};
+	};
+	sub opt{
+		my ($self, $s) = @_;
+		if ($self->{val})
+		{
+			return $s;
+		}
+		else
+		{
+			return "no-$s";
+		}
+	};
+}
+our $false = new BOOLOPT(0);
+our $true = new BOOLOPT(1);
+our %ConfigureOPTS = (
+	'api' => '1.0.0',
+	# 'deprecated' => $false, #if set to false, api would be 1.1.0, no matter what set.
+	'async' => $false,
+	'shared' => $false,
+);
+
 our $VERSION = '1.1.1';
 our @TARGETS = qw(
 	iossimulator-xcrun
 	ios64-xcrun
 	ios-xcrun
 );
+
+#########################################################################
+sub opts2string
+{
+	my $cmds = '';
+	foreach my $k(keys(%ConfigureOPTS))
+	{
+		my $v = $ConfigureOPTS{$k};
+		if (ref($v) eq ref($false))
+		{
+			$cmds .= " ";
+			$cmds .= $v->opt($k);
+		}
+		else
+		{
+			$cmds .= " --$k=$v";
+		}
+	}
+	return $cmds;
+}
+
+sub do_log
+{
+	my ($fn, $str)=@_;
+	print STDERR "$str\n";
+	open(my $fh, '>>', $fn) || return '';
+	print $fh "$str\n";
+	close($fh);
+	return 1;
+}
 
 sub explain_target_name
 {
@@ -56,11 +118,14 @@ sub build
 		}
 
 		#Configure
-		my $logf = "\"$pwd/build/$name/build-$VERSION.log\"";
+		my $logf = "$pwd/build/$name/build-$VERSION.log";
 		chdir("$pwd/src/$name/openssl-$VERSION");
 		if (! -e 'Makefile')
 		{
-			system("./Configure $t --prefix=\"$pwd/build/$name\" no-deprecated no-async no-shared > $logf");
+			my $copts = opts2string();
+			my $cmd = "./Configure $t --prefix=\"$pwd/build/$name\" $copts";
+			do_log($logf, $cmd);
+			system("$cmd >>\"$logf\"");
 			if ($? != 0) {return 0;}
 			print STDERR "Configure for $t DONE!\n";
 		}
@@ -71,13 +136,13 @@ sub build
 			my $CPU = `sysctl -n hw.ncpu`;
 			$CPU=~s/\s+$//sg;
 			print STDERR "making with $CPU threads. Log at $logf\n";
-			system("make -j$CPU >$logf 2>&1");
+			system("make -j$CPU >>\"$logf\" 2>&1");
 			if ($? != 0) {return 0;}
 			print STDERR "make DONE!\n";
 
 			# make install
 			print STDERR "make install_sw\n";
-			system("make install_sw >$logf 2>&1");
+			system("make install_sw >>\"$logf\" 2>&1");
 			if ($? != 0) {return 0;}
 			print STDERR "make install_sw DONE!\n";
 		}
